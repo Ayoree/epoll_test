@@ -2,7 +2,8 @@
 
 int epoll;
 int server_sock;
-struct epoll_event events[MAX_POLL_EVENTS];
+
+atomic_int clients_count = 0;
 
 void read_args(int argc, char* argv[], int* max_clients, int* threads)
 {
@@ -100,47 +101,68 @@ int wait_epoll(int epoll, struct epoll_event* events, size_t size)
 
 int process_client(int sock)
 {
+    unsigned char buf[64];
+    bool is_start = true;
+    bool is_command = false;
     for (;;)
     {
-        unsigned char buf[8];
         int readed = recv(sock, buf, sizeof(buf), 0);
         if (readed == 0)
         {
             printf("Client disconnected\n");
+            fflush(stdout);
             return 1;
         }
         else if (readed == -1)
         {
-            if (errno == EAGAIN || errno == EWOULDBLOCK)
+            if (errno == EAGAIN)
                 break;
             perror("Can't read from socket");
             return 1;
         }
+
+        // if (is_start)
+        //     is_command = *buf == '/';
+
+        // {
+        //     char* found = memchr(buf, '\n', readed);
+        //     if (found != NULL)
+        //     {
+        //         is_start = true;
+        //     }
+        // }
         send(sock, buf, readed, MSG_NOSIGNAL);
         printf("Readed: %.*s", readed, buf);
+        fflush(stdout);
     }
     return 0;
 }
 
 void* worker(void* args)
 {
+    struct epoll_event events[MAX_POLL_EVENTS];
     int thread_id = *(int*)args;
-    printf("Started new thread\n");
+    free(args);
+
+    printf("Started new thread %d\n", thread_id);
+    fflush(stdout);
 
     for (;;)
     {
-        int nsocks = wait_epoll(epoll, events, MAX_POLL_EVENTS);
-        for (int i = 0; i < nsocks; ++i)
+        int n = wait_epoll(epoll, events, MAX_POLL_EVENTS);
+        for (int i = 0; i < n; ++i)
         {
             const int cur_sock = events[i].data.fd;
             if (cur_sock == server_sock)
             {
                 int client_sock = accept4(server_sock, NULL, NULL, SOCK_NONBLOCK);
                 if (client_sock == -1) {
-                    printf("\tThread id: %d\n", thread_id);
+                    if (errno == EAGAIN)
+                        continue;
                     perror("Can't accept new client");
                     continue;
                 }
+                atomic_fetch_add(&clients_count, 1);
                 add_sock_to_epoll(epoll, client_sock, EPOLLIN | EPOLLET);
                 printf("New client connected. Thread ID: %d\n", thread_id);
                 fflush(stdout);
@@ -152,11 +174,11 @@ void* worker(void* args)
                 {
                     epoll_ctl(epoll, EPOLL_CTL_DEL, cur_sock, NULL);
                     close(cur_sock);
+                    atomic_fetch_sub(&clients_count, 1);
                 }
             }
         }
     }
-    free(args);
 }
 
 int main(int argc, char* argv[])
@@ -165,10 +187,10 @@ int main(int argc, char* argv[])
     int threads_count = 1;
     
     read_args(argc, argv, &max_clients, &threads_count);
-    printf("Started. Max clients: %d, threads %d\n", max_clients, threads_count);
+    printf("Started. Max clients %d, threads %d\n", max_clients, threads_count);
 
     server_sock = create_server_socket();
-    printf("Server socket created: %d\n", server_sock);
+    printf("Server socket created (fd: %d)\n", server_sock);
 
     epoll = create_epoll();
     add_sock_to_epoll(epoll, server_sock, EPOLLIN);
@@ -184,13 +206,7 @@ int main(int argc, char* argv[])
     for (int i = 0; i < threads_count; ++i)
         pthread_join(threads[i], NULL);
 
-    shutdown(server_sock, SHUT_WR);
-    {
-        unsigned char buf[64];
-        while (recv(server_sock, buf, sizeof(buf), 0) > 0);
-    }
     close(server_sock);
-
     free(threads);
 
     return 0;

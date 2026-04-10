@@ -16,14 +16,7 @@ add_compile_options(
     $<$<CXX_COMPILER_ID:MSVC>:/W4>
 )
 
-file(GLOB_RECURSE SERVER_SOURCES CONFIGURE_DEPENDS "src/server/*.c")
-file(GLOB_RECURSE CLIENT_SOURCES CONFIGURE_DEPENDS "src/client/*.c")
-
+file(GLOB_RECURSE SERVER_SOURCES CONFIGURE_DEPENDS "src/*.c")
 add_executable(server WIN32 ${SERVER_SOURCES})
-add_executable(client WIN32 ${CLIENT_SOURCES})
-
-target_precompile_headers(server PRIVATE "src/server/pch.h")
-target_precompile_headers(client PRIVATE "src/client/pch.h")
-
+target_precompile_headers(server PRIVATE "src/pch.h")
 target_compile_definitions(server PRIVATE $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Release>:RELEASE> _GNU_SOURCE)
-target_compile_definitions(client PRIVATE $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Release>:RELEASE> _GNU_SOURCE)
