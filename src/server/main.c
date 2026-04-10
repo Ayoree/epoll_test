@@ -1,5 +1,9 @@
 #define MAX_POLL_EVENTS 64
 
+int epoll;
+int server_sock;
+struct epoll_event events[MAX_POLL_EVENTS];
+
 void read_args(int argc, char* argv[], int* max_clients, int* threads)
 {
     if (argc == 2 && strcmp(argv[1], "--help") == 0)
@@ -103,7 +107,7 @@ int process_client(int sock)
         if (readed == 0)
         {
             printf("Client disconnected\n");
-            break;
+            return 1;
         }
         else if (readed == -1)
         {
@@ -118,23 +122,10 @@ int process_client(int sock)
     return 0;
 }
 
-int main(int argc, char* argv[])
+void* worker(void* args)
 {
-    int max_clients = 1024;
-    int threads = 1;
-    int epoll;
-    int server_sock;
-
-    struct epoll_event events[MAX_POLL_EVENTS];
-    
-    read_args(argc, argv, &max_clients, &threads);
-    printf("Started. Max clients: %d, threads %d\n", max_clients, threads);
-
-    server_sock = create_server_socket();
-    printf("Server socket created: %d\n", server_sock);
-
-    epoll = create_epoll();
-    add_sock_to_epoll(epoll, server_sock, EPOLLIN);
+    int thread_id = *(int*)args;
+    printf("Started new thread\n");
 
     for (;;)
     {
@@ -146,10 +137,13 @@ int main(int argc, char* argv[])
             {
                 int client_sock = accept4(server_sock, NULL, NULL, SOCK_NONBLOCK);
                 if (client_sock == -1) {
+                    printf("\tThread id: %d\n", thread_id);
                     perror("Can't accept new client");
                     continue;
                 }
                 add_sock_to_epoll(epoll, client_sock, EPOLLIN | EPOLLET);
+                printf("New client connected. Thread ID: %d\n", thread_id);
+                fflush(stdout);
             }
             else
             {
@@ -162,8 +156,33 @@ int main(int argc, char* argv[])
             }
         }
     }
-    int client_sock = accept(server_sock, NULL, NULL);
-    printf("Client connected: %d\n", client_sock);
+    free(args);
+}
+
+int main(int argc, char* argv[])
+{
+    int max_clients = 1024;
+    int threads_count = 1;
+    
+    read_args(argc, argv, &max_clients, &threads_count);
+    printf("Started. Max clients: %d, threads %d\n", max_clients, threads_count);
+
+    server_sock = create_server_socket();
+    printf("Server socket created: %d\n", server_sock);
+
+    epoll = create_epoll();
+    add_sock_to_epoll(epoll, server_sock, EPOLLIN);
+
+    pthread_t* threads = malloc(threads_count * sizeof(pthread_t));
+
+    for (int i = 0; i < threads_count; ++i)
+    {
+        int* thr_id = malloc(sizeof(int));
+        *thr_id = i;
+        pthread_create(&threads[i], NULL, worker, thr_id);
+    }
+    for (int i = 0; i < threads_count; ++i)
+        pthread_join(threads[i], NULL);
 
     shutdown(server_sock, SHUT_WR);
     {
@@ -171,6 +190,8 @@ int main(int argc, char* argv[])
         while (recv(server_sock, buf, sizeof(buf), 0) > 0);
     }
     close(server_sock);
+
+    free(threads);
 
     return 0;
 }
