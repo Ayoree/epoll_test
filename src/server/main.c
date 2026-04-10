@@ -32,7 +32,7 @@ void read_args(int argc, char* argv[], int* max_clients, int* threads)
 
 int create_server_socket()
 {
-    int sock = socket(AF_INET, SOCK_STREAM /*| SOCK_NONBLOCK*/, 0);
+    const int sock = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
     if (sock == -1)
     {
         perror("Can't create server socket");
@@ -63,7 +63,7 @@ int create_server_socket()
 
 int create_epoll()
 {
-    int epoll = epoll_create1(0);
+    const int epoll = epoll_create1(0);
     if (epoll == -1)
     {
         perror("Can't create epoll");
@@ -86,17 +86,36 @@ void add_sock_to_epoll(int epoll, int sock, uint32_t events)
 
 int wait_epoll(int epoll, struct epoll_event* events, size_t size)
 {
-    int n = epoll_wait(epoll, events, size, -1);
-    if (n == -1) [[unlikely]] {
+    const int n = epoll_wait(epoll, events, size, -1);
+    if (n == -1) {
         perror("epoll_wait error");
         exit(EXIT_FAILURE);
     }
     return n;
 }
 
-void process_client(int sock)
+int process_client(int sock)
 {
-
+    for (;;)
+    {
+        unsigned char buf[8];
+        int readed = recv(sock, buf, sizeof(buf), 0);
+        if (readed == 0)
+        {
+            printf("Client disconnected\n");
+            break;
+        }
+        else if (readed == -1)
+        {
+            if (errno == EAGAIN || errno == EWOULDBLOCK)
+                break;
+            perror("Can't read from socket");
+            return 1;
+        }
+        send(sock, buf, readed, MSG_NOSIGNAL);
+        printf("Readed: %.*s", readed, buf);
+    }
+    return 0;
 }
 
 int main(int argc, char* argv[])
@@ -106,8 +125,7 @@ int main(int argc, char* argv[])
     int epoll;
     int server_sock;
 
-    unsigned char buf[1024];
-    struct epoll_event ev, events[MAX_POLL_EVENTS];
+    struct epoll_event events[MAX_POLL_EVENTS];
     
     read_args(argc, argv, &max_clients, &threads);
     printf("Started. Max clients: %d, threads %d\n", max_clients, threads);
@@ -126,23 +144,32 @@ int main(int argc, char* argv[])
             const int cur_sock = events[i].data.fd;
             if (cur_sock == server_sock)
             {
-                int client_sock = accept(server_sock, NULL, NULL);
+                int client_sock = accept4(server_sock, NULL, NULL, SOCK_NONBLOCK);
                 if (client_sock == -1) {
                     perror("Can't accept new client");
                     continue;
                 }
-                setnonblocking(client_sock);
                 add_sock_to_epoll(epoll, client_sock, EPOLLIN | EPOLLET);
             }
             else
-                process_client(cur_sock);
+            {
+                int res = process_client(cur_sock);
+                if (res != 0)
+                {
+                    epoll_ctl(epoll, EPOLL_CTL_DEL, cur_sock, NULL);
+                    close(cur_sock);
+                }
+            }
         }
     }
     int client_sock = accept(server_sock, NULL, NULL);
     printf("Client connected: %d\n", client_sock);
 
     shutdown(server_sock, SHUT_WR);
-    while (recv(server_sock, buf, sizeof(buf), 0) > 0);
+    {
+        unsigned char buf[64];
+        while (recv(server_sock, buf, sizeof(buf), 0) > 0);
+    }
     close(server_sock);
 
     return 0;

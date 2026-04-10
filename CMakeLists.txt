@@ -25,5 +25,5 @@ add_executable(client WIN32 ${CLIENT_SOURCES})
 target_precompile_headers(server PRIVATE "src/server/pch.h")
 target_precompile_headers(client PRIVATE "src/client/pch.h")
 
-target_compile_definitions(server PRIVATE $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Release>:RELEASE>)
-target_compile_definitions(client PRIVATE $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Release>:RELEASE>)
+target_compile_definitions(server PRIVATE $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Release>:RELEASE> _GNU_SOURCE)
+target_compile_definitions(client PRIVATE $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Release>:RELEASE> _GNU_SOURCE)
