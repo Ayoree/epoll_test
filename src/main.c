@@ -105,13 +105,80 @@ void process_command(const unsigned char* command)
     fflush(stdout);
 }
 
+void parse_user_input(int sock, unsigned char* buf, const int readed, struct user_input* ui)
+{
+    struct string_view sv = {
+        .ptr = buf,
+        .len = readed
+    };
+
+    while (sv.ptr < buf + readed)
+    {
+        if (ui->is_start)
+        {
+            ui->is_command = *sv.ptr == '/';
+            if (ui->is_command)
+                memset(ui->command, 0, sizeof(ui->command));
+            ui->is_start = false;
+        }
+
+        unsigned char* nl_ptr = memchr(sv.ptr, '\n', sv.len);
+        if (!ui->is_command)
+        {
+            if (nl_ptr == NULL)
+            {
+                send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
+                break;
+            }
+            else
+            {
+                const unsigned int to_send_count = nl_ptr - sv.ptr + 1;
+                sv.len = to_send_count;
+                send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
+                sv.ptr = nl_ptr + 1;
+                ui->is_start = true;
+                ui->command_len = 0;
+                continue;
+            }
+        }
+        const unsigned short remaining_command_space = sizeof(ui->command) - ui->command_len - 1;
+        if (remaining_command_space == 0)
+        {
+            // Пропускаем слишком длинные команды, которых у нас точно нет
+            break;
+        }
+        if (nl_ptr == NULL)
+        {
+            sv.len = remaining_command_space < readed ? remaining_command_space : readed;
+            
+            memcpy(ui->command + ui->command_len, sv.ptr, sv.len);
+            ui->command_len += sv.len;
+            sv.ptr += sv.len;
+            break;
+        }
+        else
+        {
+            const unsigned int remaining_to_nl = nl_ptr - sv.ptr;
+            const unsigned int to_add_count = remaining_command_space < remaining_to_nl ? remaining_command_space : remaining_to_nl;
+            sv.len = to_add_count;
+            memcpy(ui->command + ui->command_len, sv.ptr, sv.len);
+            process_command(ui->command);
+            sv.ptr += sv.len + 1;
+            ui->is_start = true;
+            ui->command_len = 0;
+            continue;
+        }
+    }
+}
+
 int process_client(int sock)
 {
     unsigned char buf[8];
-    unsigned char command[32] = {0};
-    bool is_start = true;
-    bool is_command = false;
-    unsigned short command_len = 0;
+    struct user_input ui = {
+        .is_start = true,
+        .command_len = 0,
+        .command = {0}
+    };
 
     for (;;)
     {
@@ -130,78 +197,7 @@ int process_client(int sock)
             return 1;
         }
 
-        struct string_view sv = {
-            .ptr = buf,
-            .len = readed
-        };
-
-        while (sv.ptr < buf + readed)
-        {
-            // proccess lines
-            if (is_start)
-            {
-                is_command = *sv.ptr == '/';
-                if (is_command)
-                    memset(command, 0, sizeof(command));
-                is_start = false;
-            }
-    
-            unsigned char* nl_ptr = memchr(sv.ptr, '\n', sv.len);
-
-            // echo
-            if (!is_command)
-            {
-                if (nl_ptr == NULL)
-                {
-                    send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
-                    break;
-                }
-                else
-                {
-                    const unsigned int to_send_count = nl_ptr - sv.ptr + 1;
-                    //const unsigned int new_len = sv.len - to_send_count;
-                    sv.len = to_send_count;
-                    send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
-                    sv.ptr = nl_ptr + 1;
-                    is_start = true;
-                    command_len = 0;
-                    continue;
-                }
-            }
-
-            // command
-            const unsigned short remaining_command_space = sizeof(command) - command_len - 1;
-            if (remaining_command_space == 0)
-            {
-                printf("Command is too big. Skipped\n");
-                break;
-            }
-            if (nl_ptr == NULL)
-            {
-                //const unsigned int old_len = sv.len;
-                sv.len = remaining_command_space < readed ? remaining_command_space : readed;
-                
-                memcpy(command + command_len, sv.ptr, sv.len);
-                command_len += sv.len;
-                sv.ptr += sv.len;
-                break;
-            }
-            else
-            {
-                const unsigned int remaining_to_nl = nl_ptr - sv.ptr;
-                const unsigned int to_add_count = remaining_command_space < remaining_to_nl ? remaining_command_space : remaining_to_nl;
-                //const unsigned int new_len = sv.len - to_add_count;
-                sv.len = to_add_count;
-                memcpy(command + command_len, sv.ptr, sv.len);
-                process_command(command);
-                sv.ptr += sv.len + 1;
-                is_start = true;
-                command_len = 0;
-                continue;
-            }
-        }
-        //printf("Readed: %.*s", readed, buf);
-        //fflush(stdout);
+        parse_user_input(sock, buf, readed, &ui);
     }
     return 0;
 }
