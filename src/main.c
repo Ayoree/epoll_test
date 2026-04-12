@@ -9,7 +9,6 @@ int server_sock;
 atomic_uint_fast32_t current_clients_count = 0;
 atomic_uint_fast32_t all_clients_count = 0;
 
-
 void read_args(int argc, char* argv[], int* threads)
 {
     if (argc == 2 && strcmp(argv[1], "--help") == 0)
@@ -42,7 +41,7 @@ int create_server_socket()
 
     struct sockaddr_in local = {
         .sin_family = AF_INET,
-        .sin_port = htons(6969)
+        .sin_port = htons(local_port)
     };
     inet_pton(AF_INET, local_addr, &local.sin_addr);
 
@@ -102,6 +101,7 @@ int process_command(const char* command, int sock)
     {
         unsigned long a = atomic_load_explicit(&all_clients_count, memory_order_relaxed);
         unsigned long b = atomic_load_explicit(&current_clients_count, memory_order_relaxed);
+        // Если клиент должен получать не строку, а сразу байты значений
         //send(sock, &a, sizeof(a), MSG_NOSIGNAL);
         //send(sock, &b, sizeof(b), MSG_NOSIGNAL);
         char buf[32] = {0};
@@ -135,6 +135,7 @@ int process_command(const char* command, int sock)
     return 0;
 }
 
+// Позволяет корректно обрабатывать сообщения по частям
 int parse_user_input(int sock, char* buf, const int readed, struct user_input* ui)
 {
     struct string_view sv = {
@@ -153,6 +154,8 @@ int parse_user_input(int sock, char* buf, const int readed, struct user_input* u
         }
 
         char* nl_ptr = memchr(sv.ptr, '\n', sv.len);
+
+        // Эхо, если не команда
         if (!ui->is_command)
         {
             if (nl_ptr == NULL)
@@ -160,17 +163,16 @@ int parse_user_input(int sock, char* buf, const int readed, struct user_input* u
                 send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
                 break;
             }
-            else
-            {
-                const unsigned int to_send_count = nl_ptr - sv.ptr + 1;
-                sv.len = to_send_count;
-                send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
-                sv.ptr = nl_ptr + 1;
-                ui->is_start = true;
-                ui->command_len = 0;
-                continue;
-            }
+            const unsigned int to_send_count = nl_ptr - sv.ptr + 1;
+            sv.len = to_send_count;
+            send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
+            sv.ptr = nl_ptr + 1;
+            ui->is_start = true;
+            ui->command_len = 0;
+            continue;
         }
+
+        // Обработка команд
         const unsigned short remaining_command_space = sizeof(ui->command) - ui->command_len - 1;
         if (remaining_command_space == 0)
         {
@@ -206,7 +208,7 @@ int parse_user_input(int sock, char* buf, const int readed, struct user_input* u
 
 int process_client(int sock)
 {
-    char buf[8];
+    char buf[128]; // Можно сделать очень маленький буффер, все равно все будет ок
     struct user_input ui = {
         .is_start = true,
         .command_len = 0,
