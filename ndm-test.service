@@ -1,0 +1,16 @@
+[Unit]
+Description=NDM test-case epoll Server
+After=network.target
+StartLimitIntervalSec=0
+
+[Service]
+Type=simple
+ExecStart=server
+Restart=always
+RestartSec=5
+User=test
+
+WorkingDirectory=#.../build/bin/Debug
+
+[Install]
+WantedBy=multi-user.target
