@@ -174,11 +174,11 @@ int parse_user_input(int sock, char* buf, const int readed, struct user_input* u
 
         // Обработка команд
         const unsigned short remaining_command_space = sizeof(ui->command) - ui->command_len - 1;
+
+        // Пропускаем слишком длинные команды, которых у нас точно нет
         if (remaining_command_space == 0)
-        {
-            // Пропускаем слишком длинные команды, которых у нас точно нет
             break;
-        }
+            
         if (nl_ptr == NULL)
         {
             sv.len = remaining_command_space < readed ? remaining_command_space : readed;
@@ -188,20 +188,17 @@ int parse_user_input(int sock, char* buf, const int readed, struct user_input* u
             sv.ptr += sv.len;
             break;
         }
-        else
-        {
-            const unsigned int remaining_to_nl = nl_ptr - sv.ptr;
-            const unsigned int to_add_count = remaining_command_space < remaining_to_nl ? remaining_command_space : remaining_to_nl;
-            sv.len = to_add_count;
-            memcpy(ui->command + ui->command_len, sv.ptr, sv.len);
-            int command_res = process_command(ui->command, sock);
-            if (command_res != 0)
-                return command_res;
-            sv.ptr += sv.len + 1;
-            ui->is_start = true;
-            ui->command_len = 0;
-            continue;
-        }
+        const unsigned int remaining_to_nl = nl_ptr - sv.ptr;
+        const unsigned int to_add_count = remaining_command_space < remaining_to_nl ? remaining_command_space : remaining_to_nl;
+        sv.len = to_add_count;
+        memcpy(ui->command + ui->command_len, sv.ptr, sv.len);
+        int command_res = process_command(ui->command, sock);
+        if (command_res != 0)
+            return command_res;
+        sv.ptr += sv.len + 1;
+        ui->is_start = true;
+        ui->command_len = 0;
+        continue;
     }
     return 0;
 }

@@ -17,6 +17,6 @@ add_compile_options(
 )
 
 file(GLOB_RECURSE SERVER_SOURCES CONFIGURE_DEPENDS "src/*.c")
-add_executable(server WIN32 ${SERVER_SOURCES})
+add_executable(server ${SERVER_SOURCES})
 target_precompile_headers(server PRIVATE "src/pch.h")
 target_compile_definitions(server PRIVATE $<$<CONFIG:Debug>:DEBUG> $<$<CONFIG:Release>:RELEASE> _GNU_SOURCE)
