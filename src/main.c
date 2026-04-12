@@ -99,11 +99,20 @@ int wait_epoll(int epoll, struct epoll_event* events, size_t size)
     return n;
 }
 
+void process_command(const unsigned char* command)
+{
+    printf("Command: %s\n", command);
+    fflush(stdout);
+}
+
 int process_client(int sock)
 {
-    unsigned char buf[64];
+    unsigned char buf[8];
+    unsigned char command[32] = {0};
     bool is_start = true;
     bool is_command = false;
+    unsigned short command_len = 0;
+
     for (;;)
     {
         int readed = recv(sock, buf, sizeof(buf), 0);
@@ -116,24 +125,83 @@ int process_client(int sock)
         else if (readed == -1)
         {
             if (errno == EAGAIN)
-                break;
+                break; 
             perror("Can't read from socket");
             return 1;
         }
 
-        // if (is_start)
-        //     is_command = *buf == '/';
+        struct string_view sv = {
+            .ptr = buf,
+            .len = readed
+        };
 
-        // {
-        //     char* found = memchr(buf, '\n', readed);
-        //     if (found != NULL)
-        //     {
-        //         is_start = true;
-        //     }
-        // }
-        send(sock, buf, readed, MSG_NOSIGNAL);
-        printf("Readed: %.*s", readed, buf);
-        fflush(stdout);
+        while (sv.ptr < buf + readed)
+        {
+            // proccess lines
+            if (is_start)
+            {
+                is_command = *sv.ptr == '/';
+                if (is_command)
+                    memset(command, 0, sizeof(command));
+                is_start = false;
+            }
+    
+            unsigned char* nl_ptr = memchr(sv.ptr, '\n', sv.len);
+
+            // echo
+            if (!is_command)
+            {
+                if (nl_ptr == NULL)
+                {
+                    send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
+                    break;
+                }
+                else
+                {
+                    const unsigned int to_send_count = nl_ptr - sv.ptr + 1;
+                    //const unsigned int new_len = sv.len - to_send_count;
+                    sv.len = to_send_count;
+                    send(sock, sv.ptr, sizeof(*buf) * sv.len, MSG_NOSIGNAL);
+                    sv.ptr = nl_ptr + 1;
+                    is_start = true;
+                    command_len = 0;
+                    continue;
+                }
+            }
+
+            // command
+            const unsigned short remaining_command_space = sizeof(command) - command_len - 1;
+            if (remaining_command_space == 0)
+            {
+                printf("Command is too big. Skipped\n");
+                break;
+            }
+            if (nl_ptr == NULL)
+            {
+                //const unsigned int old_len = sv.len;
+                sv.len = remaining_command_space < readed ? remaining_command_space : readed;
+                
+                memcpy(command + command_len, sv.ptr, sv.len);
+                command_len += sv.len;
+                sv.ptr += sv.len;
+                break;
+            }
+            else
+            {
+                const unsigned int remaining_to_nl = nl_ptr - sv.ptr;
+                const unsigned int to_add_count = remaining_command_space < remaining_to_nl ? remaining_command_space : remaining_to_nl;
+                //const unsigned int new_len = sv.len - to_add_count;
+                sv.len = to_add_count;
+                memcpy(command + command_len, sv.ptr, sv.len);
+                process_command(command);
+                sv.ptr += sv.len + 1;
+                is_start = true;
+                command_len = 0;
+                continue;
+            }
+        }
+        //printf("Readed: %.*s", readed, buf);
+        //fflush(stdout);
     }
     return 0;
 }

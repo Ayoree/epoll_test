@@ -9,3 +9,9 @@
 #include <sys/epoll.h>
 #include <arpa/inet.h>
 #include <stdatomic.h>
+
+struct string_view
+{
+    unsigned char* ptr;
+    unsigned int len;
+};
