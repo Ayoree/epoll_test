@@ -1,15 +1,20 @@
 #define MAX_POLL_EVENTS 64
 
+const char* local_addr = "127.0.0.1";
+const uint16_t local_port = 6969;
+
 int epoll;
 int server_sock;
 
-atomic_int clients_count = 0;
+atomic_uint_fast32_t current_clients_count = 0;
+atomic_uint_fast32_t all_clients_count = 0;
 
-void read_args(int argc, char* argv[], int* max_clients, int* threads)
+
+void read_args(int argc, char* argv[], int* threads)
 {
     if (argc == 2 && strcmp(argv[1], "--help") == 0)
     {
-        printf("Usage: [max_clients=1024] [threads=1]\n");
+        printf("Usage: [threads=1]\n");
         exit(EXIT_SUCCESS);
     }
 
@@ -17,16 +22,7 @@ void read_args(int argc, char* argv[], int* max_clients, int* threads)
         printf("No argumets is provided. Using default values. (try `--help` for usage)\n");
 
     if (argc >= 2)
-        *max_clients = abs(atoi(argv[1]));
-    
-    if (*max_clients == 0)
-    {
-        fprintf(stderr, "Zero clients?\n");
-        exit(EXIT_FAILURE);
-    }
-
-    if (argc >= 3)
-        *threads = abs(atoi(argv[2]));
+        *threads = abs(atoi(argv[1]));
     
     if (*threads == 0)
     {
@@ -48,7 +44,7 @@ int create_server_socket()
         .sin_family = AF_INET,
         .sin_port = htons(6969)
     };
-    inet_pton(AF_INET, "127.0.0.1", &local.sin_addr);
+    inet_pton(AF_INET, local_addr, &local.sin_addr);
 
     if (bind(sock, (void*)&local, sizeof(local)) == -1)
     {
@@ -63,6 +59,7 @@ int create_server_socket()
         close(sock);
         exit(EXIT_FAILURE);
     }
+    printf("Server running at %s:%u\n", local_addr, local_port);
     return sock;
 }
 
@@ -99,13 +96,46 @@ int wait_epoll(int epoll, struct epoll_event* events, size_t size)
     return n;
 }
 
-void process_command(const unsigned char* command)
+int process_command(const char* command, int sock)
 {
-    printf("Command: %s\n", command);
-    fflush(stdout);
+    if (strcmp(command, "/stats") == 0)
+    {
+        unsigned long a = atomic_load_explicit(&all_clients_count, memory_order_relaxed);
+        unsigned long b = atomic_load_explicit(&current_clients_count, memory_order_relaxed);
+        //send(sock, &a, sizeof(a), MSG_NOSIGNAL);
+        //send(sock, &b, sizeof(b), MSG_NOSIGNAL);
+        char* buf[32] = {0};
+        snprintf((void*)buf, sizeof(buf), "%lu\n", a);
+        send(sock, buf, sizeof(buf), MSG_NOSIGNAL);
+        memset(buf, 0, sizeof(buf));
+        snprintf((void*)buf, sizeof(buf), "%lu\n", b);
+        send(sock, buf, sizeof(buf), MSG_NOSIGNAL);
+    }
+    else if (strcmp(command, "/time") == 0)
+    {
+        time_t t = time(NULL);
+        struct tm tm;
+        char buf[21] = {0};
+        buf[20] = '\n';
+        localtime_r(&t, &tm);
+        strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+        send(sock, buf, sizeof(buf), MSG_NOSIGNAL);
+    }
+    else if (strcmp(command, "/shutdown") == 0)
+    {
+        printf("Client %d shutdowned\n", sock);
+        return 1;
+    }
+    else
+    {
+        printf("received unknown command from %d\n", sock);
+        fflush(stdout);
+    }
+
+    return 0;
 }
 
-void parse_user_input(int sock, unsigned char* buf, const int readed, struct user_input* ui)
+int parse_user_input(int sock, char* buf, const int readed, struct user_input* ui)
 {
     struct string_view sv = {
         .ptr = buf,
@@ -122,7 +152,7 @@ void parse_user_input(int sock, unsigned char* buf, const int readed, struct use
             ui->is_start = false;
         }
 
-        unsigned char* nl_ptr = memchr(sv.ptr, '\n', sv.len);
+        char* nl_ptr = memchr(sv.ptr, '\n', sv.len);
         if (!ui->is_command)
         {
             if (nl_ptr == NULL)
@@ -162,18 +192,21 @@ void parse_user_input(int sock, unsigned char* buf, const int readed, struct use
             const unsigned int to_add_count = remaining_command_space < remaining_to_nl ? remaining_command_space : remaining_to_nl;
             sv.len = to_add_count;
             memcpy(ui->command + ui->command_len, sv.ptr, sv.len);
-            process_command(ui->command);
+            int command_res = process_command(ui->command, sock);
+            if (command_res != 0)
+                return command_res;
             sv.ptr += sv.len + 1;
             ui->is_start = true;
             ui->command_len = 0;
             continue;
         }
     }
+    return 0;
 }
 
 int process_client(int sock)
 {
-    unsigned char buf[8];
+    char buf[8];
     struct user_input ui = {
         .is_start = true,
         .command_len = 0,
@@ -197,7 +230,9 @@ int process_client(int sock)
             return 1;
         }
 
-        parse_user_input(sock, buf, readed, &ui);
+        int parse_res = parse_user_input(sock, buf, readed, &ui);
+        if (parse_res != 0)
+            return parse_res;
     }
     return 0;
 }
@@ -209,7 +244,6 @@ void* worker(void* args)
     free(args);
 
     printf("Started new thread %d\n", thread_id);
-    fflush(stdout);
 
     for (;;)
     {
@@ -226,7 +260,8 @@ void* worker(void* args)
                     perror("Can't accept new client");
                     continue;
                 }
-                atomic_fetch_add(&clients_count, 1);
+                atomic_fetch_add_explicit(&all_clients_count, 1, memory_order_relaxed);
+                atomic_fetch_add_explicit(&current_clients_count, 1, memory_order_relaxed);
                 add_sock_to_epoll(epoll, client_sock, EPOLLIN | EPOLLET);
                 printf("New client connected. Thread ID: %d\n", thread_id);
                 fflush(stdout);
@@ -237,8 +272,11 @@ void* worker(void* args)
                 if (res != 0)
                 {
                     epoll_ctl(epoll, EPOLL_CTL_DEL, cur_sock, NULL);
+                    shutdown(cur_sock, SHUT_WR);
+                    char buf[128];
+                    while (recv(cur_sock, buf, sizeof(buf), 0) > 0);
                     close(cur_sock);
-                    atomic_fetch_sub(&clients_count, 1);
+                    atomic_fetch_sub_explicit(&current_clients_count, 1, memory_order_relaxed);
                 }
             }
         }
@@ -247,11 +285,10 @@ void* worker(void* args)
 
 int main(int argc, char* argv[])
 {
-    int max_clients = 1024;
     int threads_count = 1;
     
-    read_args(argc, argv, &max_clients, &threads_count);
-    printf("Started. Max clients %d, threads %d\n", max_clients, threads_count);
+    read_args(argc, argv, &threads_count);
+    printf("Started at %d threads\n", threads_count);
 
     server_sock = create_server_socket();
     printf("Server socket created (fd: %d)\n", server_sock);
