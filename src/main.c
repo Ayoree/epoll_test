@@ -104,21 +104,21 @@ int process_command(const char* command, int sock)
         unsigned long b = atomic_load_explicit(&current_clients_count, memory_order_relaxed);
         //send(sock, &a, sizeof(a), MSG_NOSIGNAL);
         //send(sock, &b, sizeof(b), MSG_NOSIGNAL);
-        char* buf[32] = {0};
+        char buf[32] = {0};
         snprintf((void*)buf, sizeof(buf), "%lu\n", a);
-        send(sock, buf, sizeof(buf), MSG_NOSIGNAL);
+        send(sock, buf, sizeof(*buf) * strlen(buf), MSG_NOSIGNAL);
         memset(buf, 0, sizeof(buf));
         snprintf((void*)buf, sizeof(buf), "%lu\n", b);
-        send(sock, buf, sizeof(buf), MSG_NOSIGNAL);
+        send(sock, buf, sizeof(*buf) * strlen(buf), MSG_NOSIGNAL);
     }
     else if (strcmp(command, "/time") == 0)
     {
         time_t t = time(NULL);
         struct tm tm;
-        char buf[21] = {0};
-        buf[20] = '\n';
+        char buf[20];
         localtime_r(&t, &tm);
         strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &tm);
+        buf[19] = '\n';
         send(sock, buf, sizeof(buf), MSG_NOSIGNAL);
     }
     else if (strcmp(command, "/shutdown") == 0)
@@ -128,7 +128,7 @@ int process_command(const char* command, int sock)
     }
     else
     {
-        printf("received unknown command from %d\n", sock);
+        printf("Received unknown command `%s` from %d\n", command, sock);
         fflush(stdout);
     }
 

@@ -1,0 +1,11 @@
+фывцц
+www
+123
+1234567887654321123
+/asd
+/time
+stats bellow:
+/stats
+now shutdowning...
+/shutdown
+cool!
